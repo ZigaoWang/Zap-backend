@@ -2,6 +2,8 @@ const express = require('express');
 const axios = require('axios');
 const helmet = require('helmet');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
+const multer = require('multer');
+const FormData = require('form-data');
 require('dotenv').config();
 
 const app = express();
@@ -28,15 +30,36 @@ const rateLimiterMiddleware = (req, res, next) => {
     });
 };
 
-app.use(rateLimiterMiddleware);
+// Multer setup for file uploads
+const upload = multer();
 
-// OpenAI API endpoint
-app.post('/api/openai', async (req, res) => {
+// OpenAI API endpoint for chat completions
+app.post('/api/openai/chat', rateLimiterMiddleware, async (req, res) => {
   try {
     const response = await axios.post('https://api.uniapi.me/v1/chat/completions', req.body, {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error calling OpenAI API:', error.response ? error.response.data : error.message);
+    res.status(500).json({ error: 'An error occurred while processing your request.' });
+  }
+});
+
+// OpenAI API endpoint for audio transcription
+app.post('/api/openai/transcribe', rateLimiterMiddleware, upload.single('file'), async (req, res) => {
+  try {
+    const formData = new FormData();
+    formData.append('file', req.file.buffer, { filename: req.file.originalname });
+    formData.append('model', 'whisper-1');
+
+    const response = await axios.post('https://api.uniapi.me/v1/audio/transcriptions', formData, {
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        ...formData.getHeaders()
       }
     });
     res.json(response.data);
