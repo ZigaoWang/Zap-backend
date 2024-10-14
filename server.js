@@ -31,17 +31,40 @@ const rateLimiterMiddleware = (req, res, next) => {
     });
 };
 
-// Multer configuration
-const upload = multer({
+// Multer configuration for image uploads
+const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 限制文件大小为 10MB
+    fileSize: 10 * 1024 * 1024, // 10MB
   },
   fileFilter: (req, file, cb) => {
+    console.log('Received image file:', file);
     if (file.fieldname === 'images' && file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type or field name'));
+      cb(new Error(`Invalid file type or field name for image. Received: ${file.fieldname}, ${file.mimetype}`));
+    }
+  }
+});
+
+// Multer configuration for audio uploads
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 25 * 1024 * 1024, // 25MB
+  },
+  fileFilter: (req, file, cb) => {
+    console.log('Received audio file:', file);
+    if (file.fieldname === 'file' && (
+      file.mimetype === 'audio/mpeg' ||
+      file.mimetype === 'audio/mp4' ||
+      file.mimetype === 'audio/wav' ||
+      file.mimetype === 'audio/webm' ||
+      file.mimetype === 'audio/m4a'
+    )) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type or field name for audio. Received: ${file.fieldname}, ${file.mimetype}`));
     }
   }
 });
@@ -65,12 +88,20 @@ app.post('/api/openai/chat', rateLimiterMiddleware, async (req, res) => {
 });
 
 // OpenAI API endpoint for audio transcription
-app.post('/api/openai/transcribe', rateLimiterMiddleware, upload.single('file'), async (req, res) => {
+app.post('/api/openai/transcribe', rateLimiterMiddleware, audioUpload.single('file'), async (req, res) => {
   try {
     console.log('Received transcription request');
+    console.log('File details:', req.file);
+
     const formData = new FormData();
     formData.append('file', req.file.buffer, { filename: req.file.originalname });
     formData.append('model', 'whisper-1');
+
+    console.log('Sending request to OpenAI API');
+    console.log('Request headers:', {
+      'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY.substring(0, 5) + '...',
+      ...formData.getHeaders()
+    });
 
     const response = await axios.post('https://api.uniapi.me/v1/audio/transcriptions', formData, {
       headers: {
@@ -81,12 +112,20 @@ app.post('/api/openai/transcribe', rateLimiterMiddleware, upload.single('file'),
     console.log('Transcription response received');
     res.json(response.data);
   } catch (error) {
-    console.error('Error calling OpenAI API:', error.response ? error.response.data : error.message);
+    console.error('Error calling OpenAI API:', error);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received');
+    } else {
+      console.error('Error setting up request:', error.message);
+    }
     res.status(500).json({ error: 'An error occurred while processing your request.' });
   }
 });
 
-app.post('/api/openai/process-notes', rateLimiterMiddleware, upload.array('images'), async (req, res) => {
+app.post('/api/openai/process-notes', rateLimiterMiddleware, imageUpload.array('images'), async (req, res) => {
   try {
     console.log('Received request to process notes');
     console.log('Request body:', req.body);
@@ -99,7 +138,7 @@ app.post('/api/openai/process-notes', rateLimiterMiddleware, upload.array('image
       ]}
     ];
 
-    // 添加图片
+    // Add images
     if (req.files && req.files.length > 0) {
       req.files.forEach((file) => {
         const base64Image = file.buffer.toString('base64');
@@ -141,4 +180,5 @@ app.get('/health', (req, res) => {
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
+  console.log('OpenAI API Key:', process.env.OPENAI_API_KEY.substring(0, 5) + '...');
 });
